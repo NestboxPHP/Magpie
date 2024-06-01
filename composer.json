@@ -3,10 +3,10 @@
     "description": "User and group permissions management",
     "type": "library",
     "require": {
-        "nestboxphp/nestbox": "^0.0.3"
+        "nestboxphp/nestbox": ">=0.0.3"
     },
     "require-dev": {
-        "nestboxphp/nestbox": "^0.0.3"
+        "nestboxphp/nestbox": ">=0.0.3"
     },
     "license": "AGPL-3.0",
     "autoload": {
