@@ -8,7 +8,7 @@ use NestboxPHP\Nestbox\Nestbox;
 
 class Magpie extends Nestbox
 {
-    final protected const string PACKAGE_NAME = 'magpie';
+    final public const PACKAGE_NAME = 'magpie';
     // settings variables
     public string $magpieUsersTable = 'users';
     public string $magpieUserColumn = 'username';
@@ -17,16 +17,9 @@ class Magpie extends Nestbox
     public string $magpieRolesTable = 'magpie_roles';
     public string $magpieRoleAssignmentsTable = 'magpie_role_assignments';
 
-    public function create_tables(): void
+    protected function create_class_table_magpie_permissions(): bool
     {
-        $this->create_permissions_table();
-        $this->create_roles_table();
-        $this->create_permission_assignments_table();
-    }
-
-    private function create_class_table_magpie_permissions(): bool
-    {
-        $sql = "CREATE TABLE IF NOT EXISTS `{$this->magpiePermissionsTable}` (
+        $sql = "CREATE TABLE IF NOT EXISTS `magpie_permissions` (
                     `permission_id` INT NOT NULL AUTO_INCREMENT ,
                     `permission_name` VARCHAR(63) NOT NULL ,
                     `permission_description` VARCHAR(255) NOT NULL ,
@@ -36,9 +29,9 @@ class Magpie extends Nestbox
         return $this->query_execute(query: $sql);
     }
 
-    private function create_class_table_magpie_permission_assignments(): bool
+    protected function create_class_table_magpie_permission_assignments(): bool
     {
-        $sql = "CREATE TABLE IF NOT EXISTS `{$this->magpiePermissionAssignmentsTable}` (
+        $sql = "CREATE TABLE IF NOT EXISTS `magpie_permission_assignments` (
                     `assignment_id` INT NOT NULL AUTO_INCREMENT ,
                     `permission_id` INT NOT NULL ,
                     `user_id` VARCHAR( 125 ) NOT NULL ,
@@ -48,7 +41,7 @@ class Magpie extends Nestbox
         return $this->query_execute(query: $sql);
     }
 
-    private function create_class_table_magpie_roles(): bool
+    protected function create_class_table_magpie_roles(): bool
     {
         $sql = "CREATE TABLE IF NOT EXISTS `{$this->magpieRolesTable}` (
                     `role_id` INT NOT NULL AUTO_INCREMENT ,
@@ -60,7 +53,7 @@ class Magpie extends Nestbox
         return $this->query_execute(query: $sql);
     }
 
-    private function create_class_table_magpie_role_assignments(): bool
+    protected function create_class_table_magpie_role_assignments(): bool
     {
         $sql = "CREATE TABLE IF NOT EXISTS `{$this->magpieRoleAssignmentsTable}` (
                     `assignment_id` INT NOT NULL AUTO_INCREMENT ,
@@ -70,6 +63,17 @@ class Magpie extends Nestbox
                 ) ENGINE = InnoDB DEFAULT CHARSET=UTF8MB4 COLLATE=utf8mb4_general_ci;";
 
         return $this->query_execute(query: $sql);
+    }
+
+    public function list_permissions(bool $flatten = false): array
+    {
+        if (!$flatten) return $this->select("magpie_permissions");
+
+        $permissions = [];
+        foreach ($this->select("magpie_permissions") as $permission) {
+            $permissions[$permission["permission_name"]] = $permission["permission_description"];
+        }
+        return $permissions;
     }
 
     public function permission_create(): bool
@@ -95,6 +99,11 @@ class Magpie extends Nestbox
         // delete assigned permissions from users
         // delete grouped permissions from roles
         return true;
+    }
+
+    public function list_roles(): array
+    {
+        return $this->select($this->magpieRolesTable);
     }
 
     public function role_create(): bool
@@ -148,5 +157,74 @@ class Magpie extends Nestbox
     public function user_remove_role(): bool
     {
         return true;
+    }
+
+    /**
+     * Returns `true` if `$userId` has `$permissionName`, otherwise `false`
+     *
+     * @param string $userId
+     * @param string $permissionName
+     * @return bool
+     */
+    public function user_has_permission(string $userId, string $permissionName): bool
+    {
+        return ($this->get_user($userId)[$permissionName] ?? false) ? true : false;
+    }
+
+    public function list_users(array $showColumns = [], bool $groupPermissions = true, string $userId = null): array
+    {
+        if (!$showColumns) $showColumns = [$this->magpieUserColumn];
+        $users = [];
+        $select = [];
+
+        foreach ($this->list_permissions() as $permission) {
+            list("permission_id" => $id, "permission_name" => $name) = $permission;
+            $select[] = "MAX(asgn.permission_id = $id) AS `$name`";
+        }
+        $select = implode(", ", $select);
+
+        $where = ($userId) ? "WHERE `usrs`.`$this->magpieUserColumn` = :$this->magpieUserColumn" : "";
+        $params = ($userId) ? [$this->magpieUserColumn => $userId] : [];
+        $sql = "SELECT `usrs`.*, $select
+                FROM `$this->magpieUsersTable` usrs
+                LEFT JOIN `$this->magpiePermissionAssignmentsTable` asgn
+                    ON `usrs`.`$this->magpieUserColumn` = asgn.user_id
+                $where
+                GROUP BY `usrs`.`$this->magpieUserColumn`
+                ORDER BY `usrs`.`$this->magpieUserColumn`;";
+
+        if (!$this->query_execute($sql, $params)) return $users;
+        $usersData = $this->fetch_all_results();
+
+        $permissionIds = array_keys($this->list_permissions(flatten: true));
+
+        foreach ($usersData as $userData) {
+            // reinstantiate arrays per user
+            $user = [];
+            $permissions = [];
+            foreach ($userData as $key => $value) {
+                // custom-defined columns
+                if (in_array($key, $showColumns)) $user[$key] = $value;
+                if (array_key_exists($key, $showColumns)) $user[$showColumns[$key]] = $value;
+                // permissions
+                if (in_array($key, $permissionIds)) {
+                    if ($groupPermissions and 1 == $value) $permissions[] = $key;
+                    if (!$groupPermissions) $user[$key] = $value;
+                }
+            }
+
+            // save permissions to user data
+            if ($groupPermissions) $user["permissions"] = implode(", ", $permissions);
+
+            // add single user data to all users
+            $users[] = $user;
+        }
+
+        return $users;
+    }
+
+    public function get_user(string $userId, array $showColumns = [], bool $groupPermissions = false): array
+    {
+        return $this->list_users($showColumns, $groupPermissions, $userId)[0] ?? [];
     }
 }
