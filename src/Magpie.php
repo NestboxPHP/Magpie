@@ -70,7 +70,7 @@ class Magpie extends Nestbox
         if (!$flatten) return $this->select("magpie_permissions");
 
         $permissions = [];
-        foreach ($this->select("magpie_permissions") as $permission) {
+        foreach ($this->select("magpie_permissions", orderBy: ["permission_name" => "ASC"]) as $permission) {
             $permissions[$permission["permission_name"]] = $permission["permission_description"];
         }
         return $permissions;
